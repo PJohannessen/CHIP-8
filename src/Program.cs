@@ -1,7 +1,7 @@
 ﻿using System;
 using System.Collections;
 using System.IO;
-using System.Linq;
+using SDL2;
 
 namespace CHIP8
 {
@@ -13,14 +13,14 @@ namespace CHIP8
             emulator.Init();
             emulator.Load();
             emulator.Run();
-            Console.Read();
         }
     }
 
     public class Emulator
     {
-        private const int Height = 32;
-        private const int Width = 64;
+        private const int SystemHeight = 32;
+        private const int SystemWidth = 64;
+        private const int CanvasMultiplier = 8;
         private byte[] V = new byte[16];
         private byte[] M = new byte[4096];
         private ushort I = 0;
@@ -29,12 +29,16 @@ namespace CHIP8
         private byte DT = 0; // Delay Timer
         private byte ST = 0; // Sound Timer
         private Random R = new Random();
-        private BitArray GFX = new BitArray(Height * Width, false);
+        private BitArray GFX = new BitArray(SystemHeight * SystemWidth, false);
 
         private byte VF { set { V[15] = value; } }
 
+        private Display _display;
+
         public void Init()
         {
+            _display = new Display(SystemWidth, SystemHeight, CanvasMultiplier);
+
             Span<byte> sprites = M.AsSpan(0, 80);
             new Span<byte>(new byte[] {
                 0xF0, 0x90, 0x90, 0x90, 0xF0, // 0
@@ -56,17 +60,36 @@ namespace CHIP8
             }).CopyTo(sprites);
         }
 
+        private const int MS_PER_FRAME = (1000/60);
+
         public void Run()
         {
-            while (true)
+            SDL.SDL_Event e;
+            bool quit = false;
+            uint previous = SDL.SDL_GetTicks();
+            uint lag = 0;
+            bool shouldDraw = false;
+
+            while (!quit)
             {
-                bool shouldDraw = Process();
-                if (shouldDraw) {
-                    Console.Clear();
-                    for (int y = 0; y < Height; y++) {
-                        string s = new string(Enumerable.Range(0, Width).Select(x => GFX[y*Width+x] ? '#' : ' ').ToArray());
-                        Console.WriteLine(s);
-                    }
+                uint current = SDL.SDL_GetTicks();
+                uint elapsed = current - previous;
+                previous = current;
+                lag += elapsed;
+                SDL.SDL_PollEvent(out e);
+
+                if (e.type == SDL.SDL_EventType.SDL_QUIT || 
+                    (e.type == SDL.SDL_EventType.SDL_KEYDOWN && e.key.keysym.sym == SDL.SDL_Keycode.SDLK_q))
+                {
+                    quit = true;
+                }
+
+                shouldDraw = Process() || shouldDraw;
+                while (lag >= MS_PER_FRAME)
+                {
+                    if (shouldDraw) _display.Draw(GFX);
+                    lag -= MS_PER_FRAME;
+                    shouldDraw = false;
                 }
             }
         }
@@ -77,7 +100,7 @@ namespace CHIP8
                 case 0x0000:
                     switch (opcode & 0x00FF) {
                         case 0xE0: // 00E0: Clear the screen
-                            GFX = new BitArray(Height * Width, false);
+                            GFX = new BitArray(SystemHeight * SystemWidth, false);
                             PC += 2;
                             return true;
                         case 0xEE: // 00EE: Return from a subroutine
@@ -90,9 +113,20 @@ namespace CHIP8
                     break;
                 case 0x2000: // 2NNN: Execute subroutine starting at address NNN
                     throw new NotImplementedException("2NNN opcode not yet supported");
-                case 0x3000: // 3XNN: Skip the following instruction if the value of register VX equals NN
-                    throw new NotImplementedException("3XNN opcode not yet supported");
-                case 0x4000: // 4XNN: Skip the following instruction if the value of register VX is not equal to NN
+                case 0x3000: { // 3XNN: Skip the following instruction if the value of register VX equals NN
+                    byte register = (byte)((opcode & 0x0F00) >> 8);
+                    byte val = (byte)(opcode & 0x00FF);
+                    if (V[register] == val) PC += 4;
+                    else PC += 2;
+                    break;
+                }
+                case 0x4000: { // 4XNN: Skip the following instruction if the value of register VX is not equal to NN
+                    byte register = (byte)((opcode & 0x0F00) >> 8);
+                    byte val = (byte)(opcode & 0x00FF);
+                    if (V[register] != val) PC += 4;
+                    else PC += 2;
+                    break;
+                }
                     throw new NotImplementedException("4XNN opcode not yet supported");
                 case 0x5000: // 5XY0: Skip the following instruction if the value of register VX is equal to the value of register VY
                     throw new NotImplementedException("5XY0 opcode not yet supported");
@@ -103,8 +137,13 @@ namespace CHIP8
                     PC += 2;
                     break;
                 }
-                case 0x7000: // 7XNN: Add the value NN to register VX
+                case 0x7000: {// 7XNN: Add the value NN to register VX
+                    byte register = (byte)((opcode & 0x0F00) >> 8);
+                    byte val = (byte)(opcode & 0x00FF);
+                    V[register] += val;
+                    PC += 2;
                     break;
+                }
                 case 0x8000:
                     switch (opcode & 0x000F) {
                         case 0x0: { // 8XY0: Store the value of register VY in register VX
@@ -196,8 +235,8 @@ namespace CHIP8
                         byte b = M[I+i];
                         for (int j = 7; j >= 0; j--) {
                             bool set = (b & (1 << j)) != 0;
-                            int pos = ((y+i)*Width)+(x+Math.Abs(j-7));
-                            GFX[pos] = GFX[pos] != set;
+                            int pos = ((y+i)*SystemWidth)+(x+Math.Abs(j-7));
+                            if (pos < GFX.Count) GFX[pos] = GFX[pos] != set;
                         }
                     }
                     PC += 2;
@@ -218,13 +257,24 @@ namespace CHIP8
                             throw new NotImplementedException("FX07 opcode not yet supported");
                         case 0x0A: { // FX0A: 
                             byte register = (byte)((opcode & 0x0F00) >> 8);
-                            int input = Console.Read();
+                            int input = 0;
+                            while (input == 0)
+                            { 
+                                SDL.SDL_Event e;
+                                SDL.SDL_WaitEvent(out e);
+                                if (e.type == SDL.SDL_EventType.SDL_KEYDOWN)
+                                    input = 1;
+                            }
                             V[register] = (byte)input;
                             PC += 2;
                             break;
                         }
-                        case 0x15: // FX15: 
-                            throw new NotImplementedException("FX15 opcode not yet supported");
+                        case 0x15: {// FX15:
+                            byte register = (byte)((opcode & 0x0F00) >> 8);
+                            DT = V[register];
+                            PC += 2;
+                            break;
+                        }
                         case 0x18: // FX18: 
                             throw new NotImplementedException("FX18 opcode not yet supported");
                         case 0x1E: // FX1E: 
