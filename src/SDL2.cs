@@ -1,3 +1,4 @@
+#pragma warning disable CS1591
 #region License
 /* SDL2# - C# Wrapper for SDL2
  *
@@ -7439,3 +7440,4 @@ namespace SDL2
 		#endregion
 	}
 }
+#pragma warning restore 1591

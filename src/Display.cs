@@ -8,46 +8,52 @@ namespace CHIP8
 {
     public class Display : IDisposable
     {
-        private readonly int SystemWidth;
-        private readonly int SystemHeight;
+        public const int Width = Constants.Display.Width;
+        public const int Height = Constants.Display.Height;
+        private readonly BitArray GFX = new BitArray(Height * Width, false);
         private readonly int ResolutionMultiplier;
         private readonly IntPtr Window;
         private readonly IntPtr Renderer;
-        public Display(int systemWidth, int systemHeight, int resolutionMultiplier)
+        
+        public Display(int resolutionMultiplier)
         {
-            SystemWidth = systemWidth;
-            SystemHeight = systemHeight;
             ResolutionMultiplier = resolutionMultiplier;
 
             SDL.SDL_Init(SDL.SDL_INIT_VIDEO);
             Window = SDL.SDL_CreateWindow("CHIP-8",
                 SDL.SDL_WINDOWPOS_CENTERED,
                 SDL.SDL_WINDOWPOS_CENTERED,
-                SystemWidth * ResolutionMultiplier,
-                SystemHeight * ResolutionMultiplier,
+                Width * ResolutionMultiplier,
+                Height * ResolutionMultiplier,
                 SDL.SDL_WindowFlags.SDL_WINDOW_RESIZABLE
             );
             Renderer = SDL.SDL_CreateRenderer(Window, 0, SDL.SDL_RendererFlags.SDL_RENDERER_SOFTWARE);
         }
 
-        public void Dispose()
+        public void Draw(int x, int y, byte b)
         {
-            SDL.SDL_DestroyWindow(Window);          
-            SDL.SDL_Quit();
+            for (int j = 7; j >= 0; j--) {
+                bool set = (b & (1 << j)) != 0;
+                int yPos = (y % Height) * Width;
+                int xPos = (x+Math.Abs(j-7)) % Width;
+                int pos = yPos+xPos;
+                if (pos < GFX.Count) GFX[pos] = GFX[pos] != set;
+                // TODO: Collision detection
+            }
         }
 
-        public void Draw(BitArray gfx)
+        public void Render()
         {
             Stopwatch sw = new Stopwatch();
             sw.Start();
-            SDL.SDL_SetRenderDrawColor(Renderer, 255, 255, 255, 255);
-            SDL.SDL_RenderClear(Renderer);
             SDL.SDL_SetRenderDrawColor(Renderer, 0, 0, 0, 0);
+            SDL.SDL_RenderClear(Renderer);
+            SDL.SDL_SetRenderDrawColor(Renderer, 255, 255, 255, 255);
 
             List<SDL.SDL_Point> points = new List<SDL.SDL_Point>();
-            for (int y = 0; y < SystemHeight; y++) {
-                for (int x = 0; x < SystemWidth; x++) {
-                    bool paintPixels = gfx[y*SystemWidth+x];
+            for (int y = 0; y < Height; y++) {
+                for (int x = 0; x < Width; x++) {
+                    bool paintPixels = GFX[y*Width+x];
                     if (paintPixels) {
                         for (int y2 = 0; y2 < ResolutionMultiplier; y2++) {
                             for (int x2 = 0; x2 < ResolutionMultiplier; x2++) {
@@ -63,7 +69,22 @@ namespace CHIP8
             SDL.SDL_RenderDrawPoints(Renderer, points.ToArray(), points.Count);
             SDL.SDL_RenderPresent(Renderer);
             sw.Stop();
-            Console.WriteLine(sw.Elapsed.TotalMilliseconds);
+        }
+
+        public void Set(int pos, bool set)
+        {
+
+        }
+
+        public void Clear()
+        {
+            GFX.SetAll(false);
+        }
+
+        public void Dispose()
+        {
+            SDL.SDL_DestroyWindow(Window);          
+            SDL.SDL_Quit();
         }
     }
 }
