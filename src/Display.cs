@@ -30,16 +30,18 @@ namespace CHIP8
             Renderer = SDL.SDL_CreateRenderer(Window, 0, SDL.SDL_RendererFlags.SDL_RENDERER_SOFTWARE);
         }
 
-        public void Draw(int x, int y, byte b)
+        public bool Draw(int x, int y, byte b)
         {
+            bool collisionDetected = false;
             for (int j = 7; j >= 0; j--) {
                 bool set = (b & (1 << j)) != 0;
                 int yPos = (y % Height) * Width;
                 int xPos = (x+Math.Abs(j-7)) % Width;
                 int pos = yPos+xPos;
-                if (pos < GFX.Count) GFX[pos] = GFX[pos] != set;
-                // TODO: Collision detection
+                if (GFX[pos] == true && set == true) collisionDetected = true;
+                GFX[pos] = GFX[pos] != set;
             }
+            return collisionDetected;
         }
 
         public void Render()
@@ -69,11 +71,6 @@ namespace CHIP8
             SDL.SDL_RenderDrawPoints(Renderer, points.ToArray(), points.Count);
             SDL.SDL_RenderPresent(Renderer);
             sw.Stop();
-        }
-
-        public void Set(int pos, bool set)
-        {
-
         }
 
         public void Clear()
