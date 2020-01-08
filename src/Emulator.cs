@@ -30,7 +30,7 @@ namespace CHIP8
         {
             _display = new Display(resolutionMultiplier);
             _loader = new Loader(M.AsMemory(Constants.Memory.ProgramMemoryStart));
-            _loader.LoadRom(new FileInfo("../roms/programs/Keypad Test [Hap, 2006].ch8"));
+            _loader.LoadRom(new FileInfo("../roms/c8_test.c8"));
 
             Span<byte> sprites = M.AsSpan(0, 80);
             new Span<byte>(new byte[] {
@@ -193,10 +193,10 @@ namespace CHIP8
                             int result = V[regX] - V[regY];
                             if (result < 0) {
                                 V[regX] = (byte)(result % 256);
-                                VF = 1;
+                                VF = 0;
                             } else {
                                 V[regX] = (byte)result;
-                                VF = 0;
+                                VF = 1;
                             }
                             PC += 2;
                             break;
