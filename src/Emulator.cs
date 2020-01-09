@@ -25,9 +25,11 @@ namespace CHIP8
         private readonly Display _display;
         private readonly Loader _loader;
         private readonly Stack<ushort> CallStack = new Stack<ushort>();
+        private readonly bool _quirksMode;
 
-        public Emulator(int resolutionMultiplier)
+        public Emulator(int resolutionMultiplier, bool quirksMode)
         {
+            _quirksMode = quirksMode;
             _display = new Display(resolutionMultiplier);
             _loader = new Loader(M.AsMemory(Constants.Memory.ProgramMemoryStart));
             _loader.LoadRom(new FileInfo("../roms/c8_test.c8"));
@@ -85,7 +87,6 @@ namespace CHIP8
                     shouldDraw = false;
                     if (ST == 1)
                     {
-                        Console.WriteLine("Beeping");
                         Console.Beep();
                     }
                     if (ST > 0) ST--;
@@ -94,8 +95,15 @@ namespace CHIP8
             }
         }
 
-        private bool Process() {
+        private bool Process()
+        {
             ushort opcode = Fetch();
+            byte x = (byte)((opcode & 0x0F00) >> 8);
+            byte y = (byte)((opcode & 0x00F0) >> 4);
+            byte n = (byte)(opcode & 0x000F);
+            byte nn = (byte)(opcode & 0x00FF);
+            ushort nnn = (ushort)(opcode & 0x0FFF);
+
             switch (opcode & 0xF000) {
                 case 0x0000:
                     switch (opcode & 0x00FF) {
@@ -107,121 +115,123 @@ namespace CHIP8
                             PC = CallStack.Pop();
                             break;
                         default: // 0NNN: Execute machine language subroutine at address NNN
+                            // Deliberately not implemented
                             PC += 2;
                             break;
                     }
                     break;
                 case 0x1000: // 1NNN: Jump to address NNN
-                    PC = (ushort)(opcode & 0x0FFF);
+                    PC = nnn;
                     break;
                 case 0x2000: // 2NNN: Execute subroutine starting at address NNN
                     CallStack.Push((ushort)(PC + 2));
-                    PC = (ushort)(opcode & 0x0FFF);
+                    PC = nnn;
                     break;
                 case 0x3000: { // 3XNN: Skip the following instruction if the value of register VX equals NN
-                    byte register = (byte)((opcode & 0x0F00) >> 8);
-                    byte val = (byte)(opcode & 0x00FF);
-                    if (V[register] == val) PC += 4;
+                    if (V[x] == nn) PC += 4;
                     else PC += 2;
                     break;
                 }
                 case 0x4000: { // 4XNN: Skip the following instruction if the value of register VX is not equal to NN
-                    byte register = (byte)((opcode & 0x0F00) >> 8);
-                    byte val = (byte)(opcode & 0x00FF);
-                    if (V[register] != val) PC += 4;
-                    else PC += 2;
+                    if (V[x] != nn) PC += 2;
+                    PC += 2;
                     break;
                 }
                 case 0x5000: { // 5XY0: Skip the following instruction if the value of register VX is equal to the value of register VY
-                    byte registerX = (byte)((opcode & 0x0F00) >> 8);
-                    byte registerY = (byte)((opcode & 0x00F0) >> 4);
-                    if (V[registerX] == V[registerY]) PC += 4;
+                    if (V[x] == V[y]) PC += 4;
                     else PC += 2;
                     break;
                 }
                 case 0x6000: { // 6XNN: Store number NN in register VX
-                    byte register = (byte)((opcode & 0x0F00) >> 8);
-                    byte val = (byte)(opcode & 0x00FF);
-                    V[register] = val;
+                    V[x] = nn;
                     PC += 2;
                     break;
                 }
                 case 0x7000: {// 7XNN: Add the value NN to register VX
-                    byte register = (byte)((opcode & 0x0F00) >> 8);
-                    byte val = (byte)(opcode & 0x00FF);
-                    V[register] += val;
+                    V[x] = (byte)((V[x] + nn) % 256);
                     PC += 2;
                     break;
                 }
                 case 0x8000: {
-                    byte regX = (byte)((opcode & 0x0F00) >> 8);
-                    byte regY = (byte)((opcode & 0x00F0) >> 4);
                     switch (opcode & 0x000F) {
                         case 0x0: { // 8XY0: Store the value of register VY in register VX
-                            V[regX] = V[regY];
+                            V[x] = V[y];
                             PC += 2;
                             break;
                         }
                         case 0x1: { // 8XY1: Set VX to VX OR VY
-                            V[regX] = (byte)(V[regX] | V[regY]);
+                            V[x] = (byte)(V[x] | V[y]);
                             PC += 2;
                             break;
                         }
                         case 0x2: { // 8XY2: Set VX to VX AND VY
-                            V[regX] = (byte)(V[regX] & V[regY]);
+                            V[x] = (byte)(V[x] & V[y]);
                             PC += 2;
                             break;
                         }
                         case 0x3: { // 8XY3: Set VX to VX XOR VY
-                            V[regX] = (byte)(V[regX] ^ V[regY]);
+                            V[x] = (byte)(V[x] ^ V[y]);
                             PC += 2;
                             break;
                         }
                         case 0x4: { // 8XY4: Add the value of register VY to register VX. Set VF to 01 if a carry occurs. Set VF to 00 if a carry does not occur.
-                            int sum = V[regX] + V[regY];
+                            int sum = V[x] + V[y];
                             if (sum >= 256) {
-                                V[regX] = (byte)(sum % 256);
+                                V[x] = (byte)(sum % 256);
                                 VF = 1;
                             } else {
-                                V[regX] = (byte)sum;
+                                V[x] = (byte)sum;
                                 VF = 0;
                             }
                             PC += 2;
                             break;
                         }
                         case 0x5: { // 8XY5: Subtract the value of register VY from register VX. Set VF to 00 if a borrow occurs. Set VF to 01 if a borrow does not occur.
-                            int result = V[regX] - V[regY];
+                            int result = V[x] - V[y];
                             if (result < 0) {
-                                V[regX] = (byte)(result % 256);
+                                V[x] = (byte)(result % 256);
                                 VF = 0;
                             } else {
-                                V[regX] = (byte)result;
+                                V[x] = (byte)result;
                                 VF = 1;
                             }
                             PC += 2;
                             break;
                         }
                         case 0x6: { // 8XY6: Store the value of register VY shifted right one bit in register VX¹. Set register VF to the least significant bit prior to the shift. VY is unchanged.
-                            VF = (byte)(V[regY] & 0x0001);
-                            V[regX] = (byte)(V[regY] >> 1);
+                            if (_quirksMode) {
+                                Console.WriteLine("quirky");
+                                VF = (byte)(V[x] & 0x0001);
+                                V[x] = (byte)(V[x] >> 1);
+                            } else {
+                                VF = (byte)(V[y] & 0x0001);
+                                V[x] = (byte)(V[y] >> 1);
+                            }
+                            
                             PC += 2;
                             break;
                         }
                         case 0x7: { // 8XY7: Set register VX to the value of VY minus VX. Set VF to 00 if a borrow occurs. Set VF to 01 if a borrow does not occur.
-                            int result = V[regY] - V[regX];
+                            int result = V[y] - V[x];
                             if (result < 0) {
-                                V[regX] = (byte)(result % 256);
+                                V[x] = (byte)(result % 256);
                                 VF = 0;
                             } else {
-                                V[regX] = (byte)result;
+                                V[x] = (byte)result;
                                 VF = 1;
                             }
                             PC += 2;
                             break;
                         }
-                        case 0xE: { // 8XYE: Store the value of register VY shifted left one bit in register VX¹. Set register VF to the most significant bit prior to the shift. VY is unchanged.
-                            VF = (byte)((V[regY] >> 7) & 0x0001);
-                            V[regX] = (byte)(V[regY] << 1);
+                        case 0xE: { // 8XYE: Store the value of register VY shifted left one bit in register VX. Set register VF to the most significant bit prior to the shift. VY is unchanged.
+                            if (_quirksMode) {
+                                VF = (byte)((V[x] & 0x80) >> 7);
+                                V[x] <<= 1;
+                            } else {
+                                VF = (byte)((V[y] & 0x80) >> 7);
+                                V[x] = (byte)((V[y] << 1));
+                            }
+                            
                             PC += 2;
                             break;
                         }
@@ -231,24 +241,20 @@ namespace CHIP8
                     break;
                 }
                 case 0x9000: { // 9XY0: Skip the following instruction if the value of register VX is not equal to the value of register VY
-                    byte regX = (byte)((opcode & 0x0F00) >> 8);
-                    byte regY = (byte)((opcode & 0x00F0) >> 4);
-                    if (V[regX] != V[regY]) PC += 4;
+                    if (V[x] != V[y]) PC += 4;
                     else PC += 2;
                     break;
                 }
                 case 0xA000: // ANNN: Store memory address NNN in register I
-                    I = (ushort)(opcode & 0x0FFF);
+                    I = nnn;
                     PC += 2;
                     break;
                 case 0xB000: // BNNN: Jump to address NNN + V0
-                    PC = (ushort)((opcode & 0x0FFF) + V[0]);
+                    PC = (ushort)(nnn + V[0]);
                     break;
                 case 0xC000: { // CXNN: Set VX to a random number with a mask of NN
-                    byte register = (byte)((opcode & 0x0F00) >> 8);
-                    byte mask = (byte)(opcode & 0x00FF);
-                    byte rnd = (byte)(R.Next(0, 255) & mask);
-                    V[register] =  rnd;
+                    byte rnd = (byte)(R.Next(0, 255) & nn);
+                    V[x] =  rnd;
                     PC += 2;
                 } break;
                 // DXYN: Draw a sprite at position VX, VY
@@ -256,14 +262,11 @@ namespace CHIP8
                 // Set VF to 01 if any set pixels are changed to unset, and 00 otherwise
                 case 0xD000: {
                     bool collision = false;
-                    byte rX = (byte)((opcode & 0x0F00) >> 8);
-                    byte x = V[rX];
-                    byte rY = (byte)((opcode & 0x00F0) >> 4);
-                    byte y = V[rY];
-                    byte len = (byte)(opcode & 0x000F);
-                    for (int i = 0; i < len; i++) {
+                    byte xCoord = V[x];
+                    byte yCoord = V[y];
+                    for (int i = 0; i < n; i++) {
                         byte b = M[I+i];
-                        collision = _display.Draw(x, y+i, b) || collision;
+                        collision = _display.Draw(xCoord, yCoord+i, b) || collision;
                     }
                     if (collision) VF = 1;
                     else VF = 0;
@@ -328,14 +331,13 @@ namespace CHIP8
                                 break;
                         }
                     }
-                    byte X = (byte)((opcode & 0x0F00) >> 8);
                     switch (opcode & 0x00FF) {
                         case 0x9E: // EX9E: Skip the following instruction if the key corresponding to the hex value currently stored in register VX is pressed
-                            if (V[X] == input) PC += 4;
+                            if (V[x] == input) PC += 4;
                             else PC += 2;
                             break;
                         case 0xA1: // EXA1: Skip the following instruction if the key corresponding to the hex value currently stored in register VX is not pressed
-                            if (V[X] != input) PC += 4;
+                            if (V[x] != input) PC += 4;
                             else PC += 2;
                             break;
                         default:
@@ -346,13 +348,11 @@ namespace CHIP8
                 case 0xF000:
                     switch (opcode & 0x00FF) {
                         case 0x07: { // FX07: Store the current value of the delay timer in register VX
-                            byte register = (byte)((opcode & 0x0F00) >> 8);
-                            V[register] = DT;
+                            V[x] = DT;
                             PC += 2;
                             break;
                         }
                         case 0x0A: { // FX0A: 
-                            byte register = (byte)((opcode & 0x0F00) >> 8);
                             int input = -1;
                             while (input < 0)
                             { 
@@ -414,60 +414,51 @@ namespace CHIP8
                                     }
                                 }
                             }
-                            V[register] = (byte)input;
+                            V[x] = (byte)input;
                             PC += 2;
                             break;
                         }
                         case 0x15: { // FX15: Set the delay timer to the value of register VX
-                            byte register = (byte)((opcode & 0x0F00) >> 8);
-                            DT = V[register];
+                            DT = V[x];
                             PC += 2;
                             break;
                         }
                         case 0x18: { // FX18: Set the sound timer to the value of register VX
-                            byte register = (byte)((opcode & 0x0F00) >> 8);
-                            Console.WriteLine($"Setting ST to {V[register]}");
-                            ST = V[register];
+                            ST = V[x];
                             PC += 2;
                             break;
                         }
                         case 0x1E: { // FX1E: Add the value stored in register VX to register I
-                            byte register = (byte)((opcode & 0x0F00) >> 8);
-                            I += V[register];
+                            I += V[x];
                             PC += 2;
                             break;
                         }
                         case 0x29: { // FX29: Set I to the memory address of the sprite data corresponding to the hexadecimal digit stored in register VX
-                            byte rX = (byte)((opcode & 0x0F00) >> 8);
-                            I = (ushort)(V[rX] * 5);
-                            byte something = M[I];
+                            I = (ushort)(V[x] * 5);
                             PC += 2;
                             break;
                         }
                         case 0x33: { // FX33: Store the binary-coded decimal equivalent of the value stored in register VX at addresses I, I + 1, and I + 2
-                            byte rX = (byte)((opcode & 0x0F00) >> 8);
-                            byte x = V[rX];
-                            M[I] = (byte)(x / 100 % 10);
-                            M[I+1] = (byte)(x / 10 % 10);
-                            M[I+2] = (byte)(x % 10);
+                            byte a = V[x];
+                            M[I] = (byte)(a / 100 % 10);
+                            M[I+1] = (byte)(a / 10 % 10);
+                            M[I+2] = (byte)(a % 10);
                             PC += 2;
                             break;
                         }
-                        case 0x55: { // FX55: Store the values of registers V0 to VX inclusive in memory starting at address I. I is set to I + X + 1 after operation².
-                            byte X = (byte)((opcode & 0x0F00) >> 8);
-                            for (int i = 0; i <= X; i++)
-                            {
+                        case 0x55: { // FX55: Store the values of registers V0 to VX inclusive in memory starting at address I. I is set to I + X + 1 after operation.
+                            for (byte i = 0; i <= x; i++) {
                                 M[I+i] = V[i];
                             }
-                            I = (ushort)(I+X+1);
+                            if (!_quirksMode) I = (ushort)(I+x+1);
                             PC += 2;
                             break;
                         }
-                        case 0x65: { // FX65: 
-                            byte register = (byte)((opcode & 0x0F00) >> 8);
-                            for (byte b = 0; b <= register; b++) {
-                                V[b] = M[I+b];
+                        case 0x65: { // FX65: Fill registers V0 to VX inclusive with the values stored in memory starting at address I. I is set to I + X + 1 after operation.
+                            for (byte i = 0; i <= x; i++) {
+                                V[i] = M[I+i];
                             }
+                            if (!_quirksMode) I = (ushort)(I+x+1);
                             PC += 2;
                             break;
                         }
